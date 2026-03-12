@@ -52,17 +52,24 @@ function parseMeetingInput(input: string): { platform: Platform; meetingId: stri
   const teamsUrlRegex = /(?:https?:\/\/)?(?:teams\.microsoft\.com|teams\.live\.com)\/(?:l\/meetup-join|meet)\/([^\s?#]+)/i;
   const teamsMatch = trimmed.match(teamsUrlRegex);
   if (teamsMatch) {
-    // Extract meeting ID and passcode from the URL
-    const meetingPath = teamsMatch[1];
-    // URL decode and extract the meeting thread id
-    const decodedPath = decodeURIComponent(meetingPath);
-    const meetingId = decodedPath.split('/')[0] || decodedPath;
-    
-    // Extract passcode from query parameter (p=...)
+    // Extract passcode from query parameter (p=...) — present on teams.live.com/meet/ short links
     const passcodeMatch = trimmed.match(/[?&]p=([^&]+)/i);
     const passcode = passcodeMatch ? decodeURIComponent(passcodeMatch[1]) : undefined;
-    
-    return { platform: "teams", meetingId, passcode, originalUrl: trimmed };
+
+    // For short links: extract the numeric meeting ID
+    const shortMeetMatch = trimmed.match(/teams\.live\.com\/meet\/(\d{10,15})/i);
+    if (shortMeetMatch) {
+      return { platform: "teams", meetingId: shortMeetMatch[1], passcode, originalUrl: trimmed };
+    }
+
+    // For legacy meetup-join links: generate a stable 16-char hex ID from the URL.
+    // The full URL is passed as meeting_url so the backend uses it directly.
+    let hash = 0;
+    for (let i = 0; i < trimmed.length; i++) {
+      hash = ((hash << 5) - hash + trimmed.charCodeAt(i)) | 0;
+    }
+    const nativeId = Math.abs(hash).toString(16).padStart(16, "0").slice(0, 16);
+    return { platform: "teams", meetingId: nativeId, passcode, originalUrl: trimmed };
   }
 
   // Zoom URL patterns
@@ -86,16 +93,16 @@ function parseMeetingInput(input: string): { platform: Platform; meetingId: stri
     return { platform: "teams", meetingId: trimmed };
   }
 
-  // Generic Teams detection - contains teams.microsoft.com
+  // Generic Teams detection - contains teams.microsoft.com or teams.live.com
   if (trimmed.toLowerCase().includes('teams.microsoft.com') || trimmed.toLowerCase().includes('teams.live.com')) {
-    // Try to extract any usable ID
-    const genericId = trimmed.replace(/^https?:\/\//, '').split('/').pop()?.split('?')[0];
-    if (genericId) {
-      // Also try to extract passcode from query string
-      const passcodeMatch = trimmed.match(/[?&]p=([^&]+)/i);
-      const passcode = passcodeMatch ? decodeURIComponent(passcodeMatch[1]) : undefined;
-      return { platform: "teams", meetingId: genericId, passcode, originalUrl: trimmed };
+    const passcodeMatch = trimmed.match(/[?&]p=([^&]+)/i);
+    const passcode = passcodeMatch ? decodeURIComponent(passcodeMatch[1]) : undefined;
+    let hash = 0;
+    for (let i = 0; i < trimmed.length; i++) {
+      hash = ((hash << 5) - hash + trimmed.charCodeAt(i)) | 0;
     }
+    const nativeId = Math.abs(hash).toString(16).padStart(16, "0").slice(0, 16);
+    return { platform: "teams", meetingId: nativeId, passcode, originalUrl: trimmed };
   }
 
   return null;
@@ -162,9 +169,11 @@ export function JoinModal() {
     }
 
     // Validate Teams passcode requirement and prepare final passcode
-    // Use passcode from parsed URL first, then fall back to manually entered passcode
+    // Use passcode from parsed URL first, then fall back to manually entered passcode.
+    // meetup-join URLs are self-contained — no separate passcode needed.
     const finalPasscode = parsedInput.passcode || passcode.trim() || undefined;
-    if (parsedInput.platform === "teams" && !finalPasscode) {
+    const isMeetupJoinUrl = !!parsedInput.originalUrl?.includes("/l/meetup-join/");
+    if (parsedInput.platform === "teams" && !finalPasscode && !isMeetupJoinUrl) {
       toast.error("Passcode required", {
         description: "Microsoft Teams meetings require a passcode",
       });
