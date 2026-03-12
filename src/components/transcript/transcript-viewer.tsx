@@ -115,8 +115,6 @@ export function TranscriptViewer({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const userScrolledUpRef = useRef(false); // Track if user has manually scrolled away from bottom
-  const lastScrollTopRef = useRef(0);
   const previousSegmentsLengthRef = useRef(0);
 
   // ChatGPT prompt state
@@ -404,25 +402,8 @@ export function TranscriptViewer({
 
   const hasActiveFilters = searchQuery.trim() || selectedSpeakers.length > 0;
 
-  // Handle scroll events to detect when user scrolls up
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-
-    const currentScrollTop = el.scrollTop;
-    const prevScrollTop = lastScrollTopRef.current;
-    lastScrollTopRef.current = currentScrollTop;
-
-    // If user scrolled up, mark them as having scrolled away from bottom
-    if (currentScrollTop < prevScrollTop) {
-      userScrolledUpRef.current = true;
-    }
-
-    // If user is back at bottom, resume auto-scrolling
-    if (isNearBottom(el)) {
-      userScrolledUpRef.current = false;
-    }
-  }, [isNearBottom]);
+  // Handle scroll events (kept for potential future use / other scroll logic)
+  const handleScroll = useCallback(() => {}, []);
 
   // Track only the most recently updated segment with appended text
   useEffect(() => {
@@ -510,9 +491,6 @@ export function TranscriptViewer({
     previousSegmentsLengthRef.current = segments.length;
 
     if (!hasNewSegments) return;
-
-    // Don't auto-scroll if user has manually scrolled up
-    if (userScrolledUpRef.current) return;
 
     // Only scroll if we're actually near the bottom
     // This prevents scrolling when user is reading older content
