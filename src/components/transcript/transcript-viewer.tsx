@@ -128,11 +128,9 @@ export function TranscriptViewer({
   const [editedChatgptPrompt, setEditedChatgptPrompt] = useState(chatgptPrompt);
   const chatgptPromptTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Measure scroll container for auto-follow
-  const isNearBottom = useCallback((el: HTMLElement) => {
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    return distanceFromBottom <= 50; // Allow some tolerance
-  }, []);
+  // Track whether the user was near the bottom BEFORE new content arrives.
+  // Updated by the scroll handler so it reflects pre-update position.
+  const wasNearBottomRef = useRef(true);
   
   // Track only the most recently updated segment with appended text
   const [mostRecentUpdatedSegment, setMostRecentUpdatedSegment] = useState<{ id: string; appendedText: string } | null>(null);
@@ -402,8 +400,14 @@ export function TranscriptViewer({
 
   const hasActiveFilters = searchQuery.trim() || selectedSpeakers.length > 0;
 
-  // Handle scroll events (kept for potential future use / other scroll logic)
-  const handleScroll = useCallback(() => {}, []);
+  // Update wasNearBottomRef on every scroll so we know the user's position
+  // before the next batch of segments arrives.
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    wasNearBottomRef.current = distance <= 100;
+  }, []);
 
   // Track only the most recently updated segment with appended text
   useEffect(() => {
@@ -479,32 +483,23 @@ export function TranscriptViewer({
   }, []);
 
 
-  // Auto-scroll to bottom when new segments arrive, unless user has scrolled up
+  // Auto-scroll to bottom when new segments arrive, unless user has scrolled up.
+  // wasNearBottomRef is updated by the scroll handler, reflecting the user's position
+  // BEFORE new content is inserted — so a tall new block doesn't falsely exceed the threshold.
   useLayoutEffect(() => {
     if (!isLive) return;
 
     const el = scrollRef.current;
     if (!el) return;
 
-    // Only auto-scroll when new segments are actually added (not initial load)
     const hasNewSegments = segments.length > previousSegmentsLengthRef.current;
     previousSegmentsLengthRef.current = segments.length;
 
     if (!hasNewSegments) return;
+    if (!wasNearBottomRef.current) return;
 
-    // Only scroll if we're actually near the bottom
-    // This prevents scrolling when user is reading older content
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const shouldScroll = distanceFromBottom <= 100; // Allow more tolerance
-
-    if (!shouldScroll) return;
-
-    // Small delay to ensure DOM has updated
     requestAnimationFrame(() => {
-      // Double-check element still exists and we're still in live mode
       if (!el || !isLive) return;
-
-      // Scroll to bottom by default (like a chat app)
       bottomRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
     });
   }, [isLive, segments.length]);
