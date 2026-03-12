@@ -37,6 +37,34 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
 
   const platformConfig = PLATFORM_CONFIG[platform];
 
+  // Parse a pasted Teams URL into { nativeId, meetingUrl }.
+  // Handles both new short links (teams.live.com/meet/NUMERIC) and
+  // legacy meetup-join links (teams.microsoft.com/l/meetup-join/...).
+  const parseTeamsUrl = (input: string): { nativeId: string; meetingUrl: string } | null => {
+    const trimmed = input.trim();
+    if (!/^https?:\/\//i.test(trimmed)) return null;
+
+    try {
+      const url = new URL(trimmed);
+
+      // New format: https://teams.live.com/meet/NUMERIC_ID
+      const shortMatch = url.pathname.match(/\/meet\/(\d{10,15})/);
+      if (shortMatch) return { nativeId: shortMatch[1], meetingUrl: trimmed };
+
+      // Legacy format: https://teams.microsoft.com/l/meetup-join/...
+      if (url.hostname.includes("teams.microsoft.com") && url.pathname.includes("/l/meetup-join/")) {
+        // Derive a stable 16-char hex ID from the URL for deduplication
+        let hash = 0;
+        for (let i = 0; i < trimmed.length; i++) {
+          hash = ((hash << 5) - hash + trimmed.charCodeAt(i)) | 0;
+        }
+        const nativeId = Math.abs(hash).toString(16).padStart(16, "0").slice(0, 16);
+        return { nativeId, meetingUrl: trimmed };
+      }
+    } catch {}
+    return null;
+  };
+
   const validateMeetingId = (id: string): boolean => {
     if (!id.trim()) return false;
     if (platform === "google_meet") {
@@ -44,6 +72,12 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
     }
     if (platform === "zoom") {
       return /^\d{9,11}$/.test(id.trim());
+    }
+    if (platform === "teams") {
+      // Accept numeric ID, URL paste (validated via parseTeamsUrl), or hex hash
+      if (/^\d{10,15}$/.test(id.trim())) return true;
+      if (parseTeamsUrl(id.trim()) !== null) return true;
+      return false;
     }
     return id.trim().length > 0;
   };
@@ -57,6 +91,8 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
         ? "Valid meeting ID"
         : platform === "google_meet"
         ? "Format: abc-defg-hij"
+        : platform === "teams"
+        ? "Enter a numeric meeting ID or paste a Teams meeting link"
         : "Enter a valid meeting ID",
     };
   }, [meetingId, platform]);
@@ -64,7 +100,8 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const cleanMeetingId = meetingId.trim().toLowerCase();
+    const rawInput = meetingId.trim();
+    const cleanMeetingId = platform === "teams" ? rawInput : rawInput.toLowerCase();
 
     if (!validateMeetingId(cleanMeetingId)) {
       toast.error("Invalid meeting ID", {
@@ -73,7 +110,10 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
       return;
     }
 
-    if (platform === "teams" && !passcode.trim()) {
+    // For Teams URL pastes, passcode is embedded in the URL — don't require it separately
+    const teamsUrlParsed = platform === "teams" ? parseTeamsUrl(cleanMeetingId) : null;
+
+    if (platform === "teams" && !teamsUrlParsed && !passcode.trim()) {
       toast.error("Passcode required", {
         description: "Microsoft Teams meetings require a passcode",
       });
@@ -84,10 +124,12 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
 
     const request: CreateBotRequest = {
       platform,
-      native_meeting_id: cleanMeetingId,
+      native_meeting_id: teamsUrlParsed ? teamsUrlParsed.nativeId : cleanMeetingId,
     };
 
-    if ((platform === "teams" || platform === "zoom") && passcode) {
+    if (teamsUrlParsed) {
+      request.meeting_url = teamsUrlParsed.meetingUrl;
+    } else if ((platform === "teams" || platform === "zoom") && passcode) {
       request.passcode = passcode.trim();
     }
 
@@ -323,12 +365,14 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
                 ? meetingIdValidation.message
                 : platform === "google_meet"
                 ? "Enter the meeting code from the URL (e.g., abc-defg-hij)"
-                : "Enter the numeric meeting ID from your Teams invitation"}
+                : platform === "teams"
+              ? "Enter the numeric meeting ID or paste a full Teams meeting link"
+              : "Enter the numeric meeting ID from your invitation"}
             </p>
           </div>
 
-          {/* Passcode (Teams and Zoom) */}
-          {(platform === "teams" || platform === "zoom") && (
+          {/* Passcode (Teams and Zoom) — hidden when a full Teams URL is pasted */}
+          {(platform === "teams" || platform === "zoom") && !(platform === "teams" && parseTeamsUrl(meetingId.trim())) && (
             <div className="space-y-2">
               <Label htmlFor="passcode">Passcode</Label>
               <Input
